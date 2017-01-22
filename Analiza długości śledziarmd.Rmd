@@ -1,0 +1,200 @@
+---
+title: "Analiza długości śledzia - projekt"
+author: "Michał Myśliński"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+always_allow_html: yes
+output:
+  md_document:
+    toc: true
+    toc_depth: 2
+      
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Krótkie streszczenie
+
+Analiza dotyczy zbióru danych na temat połowu śledzia oceanicznego w Europie. Do analizy zebrano pomiary śledzi i warunków w jakich żyją z ostatnich 60 lat. Dane były pobierane z połowów komercyjnych jednostek. W ramach połowu jednej jednostki losowo wybierano od 50 do 100 sztuk trzyletnich śledzi.
+Dane stanowiły duże wyzwanie dla analityka. Ze względu na fakt, iż były one posortowane chronologicznie, to atrybut Id odpowiadał za czas, a nie xmonth.
+Przy przetwarzaniu danych i budowaniu modelu należało zwrócić dodatkowo na fakt, iż wiele atrybutów posiadało identyczne wartości dla różnych długości śledzia.
+
+
+Poniżej znajdują się szczegółowe opisy konkretnych atrybutów:
+
+| Dane  | Opis  | Dane  |
+|---------------|-------------------------------------------------------------|---------------------------------------------|
+| length  | długość śledzia | cm  |
+| cfin1  |  dostępność planktonu |  skupisko Calanus finmarchicus gat. 1 |
+| cfin2  |  dostępność planktonu |  skupisko Calanus finmarchicus gat. 2 |
+| chel1  | dostępność planktonu  | skupisko Calanus helgolandicus gat. 1  |
+| chel2  | dostępność planktonu  | skupisko Calanus helgolandicus gat. 2  |
+| lcop1  | dostępność planktonu  | skupisko widłonogów gat. 1  |
+| lcop2  | dostępność planktonu  | skupisko widłonogów gat. 2  |
+| fbar  | intensywność połowów w regionie  | ułamek pozostawionego narybku  |
+| recr  |  roczny narybek  | liczba śledzi  |
+| cumf  | łączne roczne natężenie połowów w regionie  | ułamek zachowanego narybku  |
+| totaln  |  łączna liczba ryb złowionych w ramach pojedynczego połowu  | liczba śledzi  |
+| sst  |  temperatura przy powierzchni wody | stopnie °C |
+| sal  |  poziom zasolenia |  liczba części na milion |
+| xmonth  | miesiąc połowu  | numer miesiąca  |
+| nao  |  oscylacja północnoatlantycka |  mb |
+
+
+## 2. Ładowanie wykorzystywanych bibliotek
+
+```{r biblioteki, echo = TRUE, warning=FALSE, message=FALSE}
+
+library(knitr)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(corrplot)
+library(caret)
+library(zoo)
+```
+
+## 3. Wczytanie danych
+
+```{r wczytanie, results='hide', message=FALSE , warning=FALSE}
+fish_data <- read.csv(url("http://www.cs.put.poznan.pl/dbrzezinski/teaching/zed/sledzie.csv"),header = TRUE, sep = ",", comment.char = "", stringsAsFactors = TRUE, na.strings = "?", col.names = c("id", "length", "cfin1", "cfin2", "chel1", "chel2", "lcop1", "lcop2", "fbar", "recr", "cumf", "totaln", "sst", "sal", "xmonth", "nao"))
+```
+
+## 4. Zapewnienie powtarzalności wyników 
+
+Wywołanie funkcji "set.seed(25)" zapewnia powtarzalność wyników dokonywanych operacji.
+```{r reccurent, results='hide', warning=FALSE, message=FALSE}
+set.seed(25)
+```
+
+## 5. Przetwarzanie brakujących danych
+
+Poniższy wykres przedstawia liczbę wartości NA (brak wartości) dla konkretnego zbioru danych (danej kolumny).
+
+```{r podsumowanie}
+liczba_na <- fish_data %>%
+  gather("column", "value", 1:ncol(fish_data)) %>%
+  filter(is.na(value))
+
+ggplot(liczba_na, aes(factor(column))) +
+  geom_bar(fill="white", colour="black") +
+  labs(x = "kolumna", y = "liczba brakujących wartości") + theme_dark()
+
+```
+
+Brakujące dane znajdują się w kolumnach:
+
+* cfin1 - dostępność planktonu -	skupisko Calanus finmarchicus gat. 1
+* cfin2 - dostępność planktonu - skupisko Calanus finmarchicus gat. 2
+* chel1 - dostępność planktonu - skupisko Calanus helgolandicus gat. 1
+* chel2 - dostępność planktonu - skupisko Calanus helgolandicus gat. 2
+* lcop1	- dostępność planktonu - skupisko widłonogów gat. 1
+* lcop2	- dostępność planktonu - skupisko widłonogów gat. 2
+* sst - temperatura przy powierzchni wody	stopnie °C
+
+Z powodu silnego powiązania danych, zostały one zastąpione tymi samymi danymi z obserwacji określonych przez numer miesiąca oraz liczbę złowionych ryb (sumę złowionych ryb).
+
+```{r czyszczenie, echo = TRUE, message = FALSE}
+zast_data <- function(x) replace(x, is.na(x), mean(x, na.rm = TRUE))
+data_re <- ddply(fish_data, .(totaln), transform, 
+                       cfin1 = zast_data(cfin1),
+                       cfin2 = zast_data(cfin2),
+                       chel1 = zast_data(chel1),
+                       chel2 = zast_data(chel2),
+                       lcop1 = zast_data(lcop1),
+                       lcop2 = zast_data(lcop2),
+                       sst = zast_data(sst))
+```
+
+## 6. Krótkie podsumowanie danych po czyszczeniu
+
+```{r short_podsum, echo = FALSE, message = FALSE}
+summary(data_re)
+```
+
+## 7. Zmiana wielkości ryby w czasie
+
+Poniższy wykres przedstawia zmianę długości śledzi wględem czasu. 
+
+```{r analiza_dlugosci, echo = FALSE, message=FALSE, warning=FALSE}
+lengthPlot <- ggplot(fish_data, aes(x=id, y=length)) + 
+              geom_smooth() + 
+              theme_dark() +
+              xlab("czas") +
+              ylab("długość śledzia [cm]")
+ggplotly(lengthPlot)
+```
+
+## 8. Graficzna prezentacja korelacji pomiędzy danymi
+
+Największa korelacja dotyczy par lcop1 i chel1 oraz lcop2 i chel2, z tego powodu dane zostały usunięte w dalszych etapach analizy. Zoboserwoano również duży współczynnik korelacji pomiędzy cumf oraz totaln - co naturalnie zmusza do postawienia wniosku, że wraz ze wzrostem łącznej liczby ryb złowionych w ramach pojedynczego rownolegle zwiększa się natężenie połowów. Dodatkowo można stwierdzić, że łączne roczne natężenie połowów (cumf) było wysokie tak samo jak ich intensywność (fbar).
+
+```{r correlation_analysis}
+cor_dat <- cor(data_re %>% select(-id))
+corrplot(cor_dat, method="circle")
+```
+
+
+
+## 9. Regresor przewidujący rozmiar śledzia
+
+Podział zbioru danych na zbiór treningowy i zbiór testowy. 
+Dla zbioru treningowego użyte zostały dane bez wartości NA, które zostały usunięte ze względu na brak wpływu na wartość atrybutu "length". 
+Dla zbioru testowego zastosowano dane także bez tych atrybutów, które nie zostały uwzględnione dla danych treningowych.
+
+```{r regr_pred,  warning=FALSE, message=FALSE, cache=TRUE}
+
+clean_data <- select(data_re,-c(chel1,chel2,cumf))
+
+w_tren <-
+  createDataPartition(
+    y = clean_data$length,
+    p = .80,
+    list = FALSE)
+training <- clean_data[ w_tren,]
+testing  <- clean_data[-w_tren,]
+control <- trainControl(
+  method = "repeatedcv",
+  number = 3,
+  repeats = 3)
+fish_done <- train(length ~ .,
+             data = training,
+             method = "rf",
+             trControl = control,
+             importance = TRUE,
+             ntree = 10
+)
+```
+## 10. Model
+``` {r fish_done}
+fish_done
+```
+
+## 11. Przewidywanie wartości i ocena błędu
+
+Poniższe wyniki wskazują, że zbiór nie jest przetrenowany.
+
+```{r sprawdz}
+testing <- na.omit(testing)
+przew <- predict(fish_done,testing)
+aktualne <- testing[,"length"]
+RMSE <- sqrt(mean((przew-aktualne)^2))
+RMSE
+```
+
+## 12. Analiza ważności atrybutów
+```{r important}
+varImp(fish_done$finalModel)
+```
+## 13. Wnioski
+
+Według powyższej analizy, na długość śledzia najbardziej ma wpływ atrybut xmonth. Można wysnuć wnioski, że ma to wpływ z występowaniem planktonu o konkrentej porze roku.
+
+_____________________________________________________________
+Moment, when laptop turns into heli because of Random Forest:
+
+![Możliwość używania gifów wpływa pozytywnie na dalszą współpracę z językiem R](https://media.giphy.com/media/26hit6zxaNMzsldDy/giphy.gif)
+
