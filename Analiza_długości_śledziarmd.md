@@ -310,24 +310,6 @@ Poniższe wyniki wskazują, że zbiór nie jest przetrenowany.
 
     testing <- na.omit(testing)
     przew <- predict(fish_done,testing)
-
-    ## Loading required package: randomForest
-
-    ## randomForest 4.6-12
-
-    ## Type rfNews() to see new features/changes/bug fixes.
-
-    ## 
-    ## Attaching package: 'randomForest'
-
-    ## The following object is masked from 'package:ggplot2':
-    ## 
-    ##     margin
-
-    ## The following object is masked from 'package:dplyr':
-    ## 
-    ##     combine
-
     aktualne <- testing[,"length"]
     RMSE <- sqrt(mean((przew-aktualne)^2))
     RMSE
